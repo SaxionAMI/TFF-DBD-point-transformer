@@ -22,6 +22,7 @@ from util.s3dis import S3DIS
 from util.common_util import AverageMeter, intersectionAndUnionGPU, find_free_port
 from util.data_util import collate_fn
 from util import transform as t
+from util.saxion_dataset import SaxionDataset
 
 
 def get_parser():
@@ -77,8 +78,9 @@ def main():
         args.multiprocessing_distributed = False
 
     if args.data_name == 's3dis':
-        S3DIS(split='train', data_root=args.data_root, test_area=args.test_area)
-        S3DIS(split='val', data_root=args.data_root, test_area=args.test_area)
+        pass
+    elif args.data_name == 'strukton':
+        pass
     else:
         raise NotImplementedError()
     if args.multiprocessing_distributed:
@@ -162,25 +164,35 @@ def main_worker(gpu, ngpus_per_node, argss):
             if main_process():
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
-    train_data = S3DIS(split='train', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=args.voxel_max, transform=train_transform, shuffle_index=True, loop=args.loop)
-    if main_process():
-            logger.info("train_data samples: '{}'".format(len(train_data)))
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
-    else:
-        train_sampler = None
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, collate_fn=collate_fn)
 
     val_loader = None
-    if args.evaluate:
-        val_transform = None
-        val_data = S3DIS(split='val', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=800000, transform=val_transform)
+    if args.data_name == 's3dis':
+        train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
+        train_data = S3DIS(split='train', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=args.voxel_max, transform=train_transform, shuffle_index=True, loop=args.loop)
+        if main_process():
+                logger.info("train_data samples: '{}'".format(len(train_data)))
         if args.distributed:
-            val_sampler = torch.utils.data.distributed.DistributedSampler(val_data)
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
         else:
-            val_sampler = None
-        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size_val, shuffle=False, num_workers=args.workers, pin_memory=True, sampler=val_sampler, collate_fn=collate_fn)
+            train_sampler = None
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, collate_fn=collate_fn)
+
+        if args.evaluate:
+            val_transform = None
+            val_data = S3DIS(split='val', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=800000, transform=val_transform)
+            if args.distributed:
+                val_sampler = torch.utils.data.distributed.DistributedSampler(val_data)
+            else:
+                val_sampler = None
+            val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size_val, shuffle=False, num_workers=args.workers, pin_memory=True, sampler=val_sampler, collate_fn=collate_fn)
+    elif args.data_name == 'strukton':
+        train_data = SaxionDataset(args.dset_path,lo=[args.leave_out], permute=True)
+        val_data = SaxionDataset(args.dset_path,lo=[args.leave_out],mode="val")
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True, drop_last=True)
+        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True, drop_last=True)
+    else:
+        raise NotImplementedError()
+
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
