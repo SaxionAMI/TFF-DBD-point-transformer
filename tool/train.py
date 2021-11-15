@@ -186,10 +186,12 @@ def main_worker(gpu, ngpus_per_node, argss):
                 val_sampler = None
             val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size_val, shuffle=False, num_workers=args.workers, pin_memory=True, sampler=val_sampler, collate_fn=collate_fn)
     elif args.data_name == 'strukton':
+        print("Halloooo!!")
+        print("Leave out: {:d}".format(args.leave_out))
         train_data = SaxionDataset(args.dset_path,lo=[args.leave_out], permute=True)
         val_data = SaxionDataset(args.dset_path,lo=[args.leave_out],mode="val")
-        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True, drop_last=True)
-        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=args.workers, pin_memory=True, drop_last=True)
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size, collate_fn=collate_fn, pin_memory=True, drop_last=True)
     else:
         raise NotImplementedError()
 

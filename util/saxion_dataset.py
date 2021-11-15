@@ -80,6 +80,7 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 				self.path = path
 				self.permute = permute
 				self.cnt = 0
+				self.val_cnt = 0
 				self.npoints = 0
 				self.lo = lo
 				self.mode = mode
@@ -148,14 +149,16 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 			labels = np.expand_dims(labels, axis=1)
 			points = self.data[key,:,:]
 			#return (self.data[key,:,:], labels, self.weights)
-			return (points, labels)
-			#return (points[:,[0,1,2,6]],labels)
+			#return (points, labels)
+			return (points[:,0:3], points[:,3:6] ,labels)
 		
 		# Returns a sample
 		def __next__(self):
 			#print("JAA next called")
 			if self.cnt >= self.__len__():
 				self.cnt = 0
+				if self.mode != "val":
+					raise StopIteration
 
 			# Check if next one is a leave-out
 			if self.lo is not None:
@@ -165,7 +168,12 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 						self.cnt = 0
 
 			if self.mode == "val":
+				if self.val_cnt >= 4:
+					val_cnt = 0
+					raise StopIteration
+				self.val_cnt = self.val_cnt + 1
 				self.cnt = self.lo[0]
+
 
 			points = self.data[self.cnt,...]
 			#feats = self.data[self.cnt,:,3:]
@@ -189,8 +197,11 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 			#print("Points shape:")
 			#print(points.shape)
 			self.cnt = self.cnt+1
-			return (points,labels)
-			#return (points[:,[0,1,2,6]],labels)
+			#return (points,labels)
+			coord = torch.FloatTensor(points[:,0:3])
+			feat = torch.FloatTensor(points[:,3:6])
+			label = torch.LongTensor(labels)
+			return coord, feat, label
 
 if __name__ == '__main__':
 		d = SaxionDataset('train_131072.hdf5', permute=True, lo=[7])

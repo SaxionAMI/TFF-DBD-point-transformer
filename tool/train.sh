@@ -10,6 +10,7 @@ TEST_CODE=test.py
 
 dataset=$1
 exp_name=$2
+leave_out=$3
 exp_dir=exp/${dataset}/${exp_name}
 model_dir=${exp_dir}/model
 result_dir=${exp_dir}/result
@@ -24,5 +25,6 @@ cp tool/train.sh tool/${TRAIN_CODE} ${config} tool/test.sh tool/${TEST_CODE} ${e
 now=$(date +"%Y%m%d_%H%M%S")
 $PYTHON ${exp_dir}/${TRAIN_CODE} \
   --config=${config} \
+  DATA.leave_out ${leave_out} \
   save_path ${exp_dir} \
   2>&1 | tee ${exp_dir}/train-$now.log
