@@ -15,12 +15,26 @@ def sa_create(name, var):
 
 
 def collate_fn(batch):
-    coord, feat, label = list(zip(*batch))
+    if len(batch[0]) == 3:
+        coord, feat, label = list(zip(*batch))
+    else:
+        coord, feat, label, w = list(zip(*batch))
     offset, count = [], 0
+    #print("collate_fn")
+    #print(len(batch))
+    #print(coord[0].shape)
+    #print(feat[0].shape)
+    #print(label[0].shape)
+    #print(w[0].shape)
+    #print("--------")
     for item in coord:
         count += item.shape[0]
         offset.append(count)
-    return torch.cat(coord), torch.cat(feat), torch.cat(label), torch.IntTensor(offset)
+
+    if len(batch[0]) == 3:
+        return torch.cat(coord), torch.cat(feat), torch.cat(label), torch.IntTensor(offset)
+    else:
+        return torch.cat(coord), torch.cat(feat), torch.cat(label), torch.IntTensor(offset), torch.cat(w)
 
 
 def data_prepare(coord, feat, label, split='train', voxel_size=0.04, voxel_max=None, transform=None, shuffle_index=False):

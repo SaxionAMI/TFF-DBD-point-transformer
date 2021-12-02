@@ -23,6 +23,7 @@ from util.common_util import AverageMeter, intersectionAndUnionGPU, find_free_po
 from util.data_util import collate_fn
 from util import transform as t
 from util.saxion_dataset import SaxionDataset
+from util.saxion_dataset_v2 import SaxionDatasetV2
 
 
 def get_parser():
@@ -58,7 +59,8 @@ def main_process():
 
 def main():
     args = get_parser()
-    os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
+    #os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
+    #os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
     if args.manual_seed is not None:
         random.seed(args.manual_seed)
@@ -109,10 +111,16 @@ def main_worker(gpu, ngpus_per_node, argss):
     model = Model(c=args.fea_dim, k=args.classes)
     if args.sync_bn:
        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label).cuda()
+    weights = np.ones(args.classes)
+    weights[0] = 0 # Class zero has no weight
+    class_weight = torch.FloatTensor(weights).cuda()
+    #criterion = nn.CrossEntropyLoss(weight=class_weight,ignore_index=args.ignore_label).cuda()
+    criterion = nn.CrossEntropyLoss(reduction='none').cuda()
+    criterion_val = nn.CrossEntropyLoss(ignore_index=args.ignore_label).cuda()
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
     scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.epochs*0.6), int(args.epochs*0.8)], gamma=0.1)
+    #scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[30,], gamma=0.1)
 
     if main_process():
         global logger, writer
@@ -121,7 +129,7 @@ def main_worker(gpu, ngpus_per_node, argss):
         logger.info(args)
         logger.info("=> creating model ...")
         logger.info("Classes: {}".format(args.classes))
-        logger.info(model)
+        #logger.info(model)
     if args.distributed:
         torch.cuda.set_device(gpu)
         args.batch_size = int(args.batch_size / ngpus_per_node)
@@ -188,10 +196,23 @@ def main_worker(gpu, ngpus_per_node, argss):
     elif args.data_name == 'strukton':
         print("Halloooo!!")
         print("Leave out: {:d}".format(args.leave_out))
-        train_data = SaxionDataset(args.dset_path,lo=[args.leave_out], permute=True)
-        val_data = SaxionDataset(args.dset_path,lo=[args.leave_out],mode="val")
-        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True, drop_last=True)
-        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+        train_data = SaxionDatasetV2(args.dset_path,lo=args.leave_out, npoints=4096, permute=True)
+        val_data = SaxionDatasetV2(args.dset_path,lo=args.leave_out, npoints=4096, permute=False, mode="val")
+        #train_loader = train_data
+        #train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+        val_loader = torch.utils.data.DataLoader(val_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True)
+        #train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, pin_memory=True, drop_last=True)
+
+        #val_ds = SaxionDataset(args.dset_path,lo=[args.leave_out],mode="val")
+        #coord, feat, label = train_data[args.leave_out]
+        #idx_data = np.arange(label.shape[0])
+        #coord = torch.FloatTensor(coord).cuda(non_blocking=True)
+        #feat = torch.FloatTensor(feat).cuda(non_blocking=True)
+        #label = torch.LongTensor(label).cuda(non_blocking=True)
+        #offset = torch.IntTensor(np.cumsum(idx_data.size)).cuda(non_blocking=True)
+        #val_sample = (coord, feat, label, offset)
+
     else:
         raise NotImplementedError()
 
@@ -213,7 +234,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             if args.data_name == 'shapenet':
                 raise NotImplementedError()
             else:
-                loss_val, mIoU_val, mAcc_val, allAcc_val = validate(val_loader, model, criterion)
+                loss_val, mIoU_val, mAcc_val, allAcc_val = validate(val_loader, model, criterion_val)
 
             if main_process():
                 writer.add_scalar('loss_val', loss_val, epoch_log)
@@ -247,14 +268,28 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     model.train()
     end = time.time()
-    max_iter = args.epochs * len(train_loader)
-    for i, (coord, feat, target, offset) in enumerate(train_loader):  # (n, 3), (n, c), (n), (b)
+    max_iter = args.epochs * 15
+    train_iter  =iter(train_loader)
+    #for i, (coord, feat, target, offset) in enumerate(train_loader):  # (n, 3), (n, c), (n), (b)
+    for i in np.arange(args.steps_per_epoch):
+        coord, feat, target, offset, weights = next(train_iter)
+        #print("Hello from train()")
+        #print(coord.shape)
+        #print(feat.shape)
+        #print(target.shape)
+        #print(weights.shape)
+        #print(offset.shape)
+        #print("----")
         data_time.update(time.time() - end)
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
+        weights = weights.cuda(non_blocking=True)
         output = model([coord, feat, offset])
         if target.shape[-1] == 1:
             target = target[:, 0]  # for cls
         loss = criterion(output, target)
+        #print(loss.shape)
+        loss = loss * weights
+        loss = torch.mean(loss)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -279,20 +314,21 @@ def train(train_loader, model, criterion, optimizer, epoch):
         end = time.time()
 
         # calculate remain time
-        current_iter = epoch * len(train_loader) + i + 1
-        remain_iter = max_iter - current_iter
-        remain_time = remain_iter * batch_time.avg
-        t_m, t_s = divmod(remain_time, 60)
-        t_h, t_m = divmod(t_m, 60)
-        remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+        current_iter = epoch * args.steps_per_epoch + i + 1
+        #remain_iter = max_iter - current_iter
+        #remain_time = remain_iter * batch_time.avg
+        #t_m, t_s = divmod(remain_time, 60)
+        #t_h, t_m = divmod(t_m, 60)
+        #remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+        remain_time = '0'
 
         if (i + 1) % args.print_freq == 0 and main_process():
             logger.info('Epoch: [{}/{}][{}/{}] '
-                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                        'Data {data_time.avg:.3f} '
+                        'Batch {batch_time.avg:.3f} '
                         'Remain {remain_time} '
                         'Loss {loss_meter.val:.4f} '
-                        'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, len(train_loader),
+                        'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, args.steps_per_epoch,
                                                           batch_time=batch_time, data_time=data_time,
                                                           remain_time=remain_time,
                                                           loss_meter=loss_meter,
@@ -302,8 +338,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
             writer.add_scalar('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
             writer.add_scalar('mAcc_train_batch', np.mean(intersection / (target + 1e-10)), current_iter)
             writer.add_scalar('allAcc_train_batch', accuracy, current_iter)
-        if i == args.steps_per_epoch:
-            break
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
@@ -318,53 +352,30 @@ def train(train_loader, model, criterion, optimizer, epoch):
 def validate(val_loader, model, criterion):
     if main_process():
         logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
     loss_meter = AverageMeter()
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
     target_meter = AverageMeter()
 
     model.eval()
-    end = time.time()
-    for i, (coord, feat, target, offset) in enumerate(val_loader):
-        data_time.update(time.time() - end)
-        coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
-        if target.shape[-1] == 1:
-            target = target[:, 0]  # for cls
-        with torch.no_grad():
-            output = model([coord, feat, offset])
-        loss = criterion(output, target)
+    (coord, feat, target, offset, w) = next(iter(val_loader))
+    coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
 
-        output = output.max(1)[1]
-        n = coord.size(0)
-        if args.multiprocessing_distributed:
-            loss *= n
-            count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(loss), dist.all_reduce(count)
-            n = count.item()
-            loss /= n
+    if target.shape[-1] == 1:
+        target = target[:, 0]  # for cls
+    with torch.no_grad():
+        output = model([coord, feat, offset])
+    loss = criterion(output, target)
 
-        intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
-        if args.multiprocessing_distributed:
-            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+    output = output.max(1)[1]
+    n = coord.size(0)
 
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        loss_meter.update(loss.item(), n)
-        batch_time.update(time.time() - end)
-        end = time.time()
-        if (i + 1) % args.print_freq == 0 and main_process():
-            logger.info('Test: [{}/{}] '
-                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
-                        'Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f}) '
-                        'Accuracy {accuracy:.4f}.'.format(i + 1, len(val_loader),
-                                                          data_time=data_time,
-                                                          batch_time=batch_time,
-                                                          loss_meter=loss_meter,
-                                                          accuracy=accuracy))
+    intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
+    intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
+    intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+
+    accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
+    loss_meter.update(loss.item(), n)
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)

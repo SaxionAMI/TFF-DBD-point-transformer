@@ -150,11 +150,11 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 			points = self.data[key,:,:]
 			#return (self.data[key,:,:], labels, self.weights)
 			#return (points, labels)
-			return (points[:,0:3], points[:,3:7] ,labels)
+			feats = np.hstack((np.ones((points.shape[0],1)),points[:,0:3]))
+			return (points[:,0:3], feats ,labels)
 		
 		# Returns a sample
 		def __next__(self):
-			#print("JAA next called")
 			if self.cnt >= self.__len__():
 				self.cnt = 0
 				#if self.mode != "val":
@@ -166,20 +166,10 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 					self.cnt = self.cnt+1
 					if self.cnt >= self.__len__():
 						self.cnt = 0
-
-			if self.mode == "val":
-				#if self.val_cnt >= 4:
-				#	val_cnt = 0
-				#	raise StopIteration
-				self.val_cnt = self.val_cnt + 1
-				self.cnt = self.lo[0]
-
-
 			points = self.data[self.cnt,...]
 			#feats = self.data[self.cnt,:,3:]
 
 			labels = self.labels[self.cnt,:]
-			labels = np.expand_dims(labels, axis=1)
 
 			# Apply permutations
 			if self.permute:
@@ -187,21 +177,22 @@ class SaxionDataset(torch.utils.data.IterableDataset):
 				points[:,0:3] = self.jitter(points[:,0:3])
 				points = self.rotate(points)
 				points[:,0:3] = self.translate(points[:,0:3])
-			#print(points.shape)
-			#print(feats.shape)
-			#points = np.concatenate((points, feats),axis=1)
-
-			#sample_weights = np.take(self.weights, labels[:,0])
-			#sample_weights = np.expand_dims(sample_weights, axis=1)
-			#return (points,labels, sample_weights)
-			#print("Points shape:")
-			#print(points.shape)
 			self.cnt = self.cnt+1
-			#return (points,labels)
+
+            #https://github.com/ultralytics/yolov3/issues/249
+			weights = np.bincount(labels, minlength=14)
+			weights[0] = 0
+			weights = np.divide(np.sum(weights),weights, out=np.zeros_like(weights, dtype=float), where=(weights!=0))
+			weights = np.take(weights, labels)
+
+			labels = np.expand_dims(labels, axis=1)
+			feats = np.hstack((np.ones((points.shape[0],1)),points[:,0:3]))
 			coord = torch.FloatTensor(points[:,0:3])
-			feat = torch.FloatTensor(points[:,3:7])
+			feat = torch.FloatTensor(feats)
 			label = torch.LongTensor(labels)
-			return coord, feat, label
+			offset = torch.IntTensor([coord.shape[0]])
+			weights = torch.FloatTensor(weights)
+			return coord, feat, label, offset, weights
 
 if __name__ == '__main__':
 		d = SaxionDataset('train_131072.hdf5', permute=True, lo=[7])

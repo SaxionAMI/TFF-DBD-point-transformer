@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 export PYTHONPATH=./
 eval "$(conda shell.bash hook)"
@@ -9,10 +9,12 @@ TEST_CODE=test_strukton.py
 
 dataset=$1
 exp_name=$2
-leave_out=$3
+
+for leave_out in {0..14}
+do
+echo ${leave_out}
 
 exp_dir=exp/${dataset}/${exp_name}/lo_${leave_out}
-#exp_dir=exp/${dataset}/${exp_name}/
 model_dir=${exp_dir}/model
 result_dir=${exp_dir}/result
 config=config/${dataset}/${dataset}_${exp_name}.yaml
@@ -21,7 +23,7 @@ mkdir -p ${result_dir}/last
 mkdir -p ${result_dir}/best
 
 now=$(date +"%Y%m%d_%H%M%S")
-cp ${config} tool/test.sh tool/${TEST_CODE} ${exp_dir}
+cp ${config} tool/test_loocv.sh tool/${TEST_CODE} ${exp_dir}
 
 ##: '
 #$PYTHON -u ${exp_dir}/${TEST_CODE} \
@@ -40,3 +42,4 @@ $PYTHON -u ${exp_dir}/${TEST_CODE} \
   model_path ${model_dir}/model_last.pth \
   2>&1 | tee ${exp_dir}/test_last-$now.log
 #'
+done
